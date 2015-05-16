@@ -1,7 +1,7 @@
-CaptureBate
+capturebate-node
 ==========
 
-CaptureBate lets you follow and archive your favorite models shows on chaturbate.com
+capturebate-node lets you follow and archive your favorite models' shows on chaturbate.com
 
 Requirements
 ==========
