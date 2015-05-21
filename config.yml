@@ -2,3 +2,4 @@ username: testingallthethings # Your Chaturbate username
 password: 2YY84bKlOC79KNQ # Your Chaturbate password, I promise not to do anything bad with it
 captureDirectory: captures/ # Where you want the captures to be saved to
 modelScanInterval: 10 # In seconds, how often capturebate-node checks for newly-online models
+debug: false

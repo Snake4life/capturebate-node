@@ -77,7 +77,7 @@ var capture = function (modelName) {
 	}).then(function (commandArguments) {
 		var spawnArguments = [
 			"--live",
-			"--quiet",
+			config.debug ? "" : "--quiet",
 			"--rtmp",
 			"rtmp://" + commandArguments.streamServer + "/live-edge",
 			"--pageUrl",
