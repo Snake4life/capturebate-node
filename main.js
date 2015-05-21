@@ -30,7 +30,7 @@ mkdirp(config.captureDirectory, function(err) {
 });
 
 var getCurrentDateTime = function() {
-	return moment().format("YYYY-MM-DDTHH:mm:ss"); // The only true way of writing out dates and times, ISO 8601
+	return moment().format("YYYY-MM-DDThhmmss"); // The only true way of writing out dates and times, ISO 8601
 };
 
 var getCommandArguments = function (modelName) {
