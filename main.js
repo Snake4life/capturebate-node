@@ -29,6 +29,12 @@ mkdirp(config.captureDirectory, function(err) {
 	}
 });
 
+var debugPrint = function(printString) {
+	if (config.debug) {
+		console.log("[" + getCurrentDateTime() + "]", printString);
+	}
+};
+
 var getCurrentDateTime = function() {
 	return moment().format("YYYY-MM-DDThhmmss"); // The only true way of writing out dates and times, ISO 8601
 };
@@ -152,10 +158,14 @@ var chaturbateLogin = function() {
 
 var mainLoop = function() {
 	Promise.try(function() {
+		debugPrint("Logging in to Chaturbate (it's normal for this to happen all the time)");
+
 		return chaturbateLogin();
 	}).then(function (response) {
 		return getLiveModels();
 	}).then(function (liveModels) {
+		debugPrint("Found these live followed models: " + liveModels.toString());
+
 		liveModels.forEach(function (liveModel) {
 			if (modelsCurrentlyCapturing.indexOf(liveModel) === -1) {
 				console.log("[" + getCurrentDateTime() + "]", liveModel, "is now online, starting rtmpdump process");
@@ -166,6 +176,8 @@ var mainLoop = function() {
 		});
 
 	}).then(function() {
+		debugPrint("Started capturing all models found, will search for new models in " + config.modelScanInterval);
+
 		setTimeout(mainLoop, config.modelScanInterval);
 	});
 };
