@@ -1,5 +1,6 @@
 // SN4T14 2015-05-13
 // License: WTFPL
+// jshint node: true
 'use strict';
 var Promise = require('bluebird');
 var yaml = require('js-yaml');
@@ -59,7 +60,7 @@ var getCommandArguments = function (modelName) {
 
 		var streamData = scripts.match(/EmbedViewerSwf\(([\s\S]+?)\);/); // "EmbedViewerSWF" is ChaturBate's shitty name for the stream data, all their code has really cryptic names for everything
 
-		if (streamData != null) {
+		if (streamData !== null) {
 			commandArguments.streamServer = streamData
 			[1]
 			.split(",")
@@ -124,6 +125,11 @@ var capture = function (modelName) {
 		});
 	}).catch(errors.ModelOfflineError, function (e) {
 		console.log("[" + getCurrentDateTime() + "]", e.explanation);
+
+		var modelIndex = modelsCurrentlyCapturing.indexOf(modelName);
+		if(modelIndex !== -1) {
+			modelsCurrentlyCapturing.splice(modelIndex, 1);
+		}
 	});
 };
 
