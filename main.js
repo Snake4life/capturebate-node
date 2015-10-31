@@ -4,7 +4,7 @@
 'use strict';
 var Promise = require('bluebird');
 var yaml = require('js-yaml');
-var fs = require('fs');
+var fs = Promise.promisifyAll(require('fs'));
 var bhttp = require('bhttp');
 var cheerio = require('cheerio');
 var moment = require('moment');
@@ -24,13 +24,13 @@ errors.create({
 	explanation: "Model appears offline, it's normal for this to happen occasionally, if this happens to models that you know are online, you should file an issue on GitHub."
 });
 
-mkdirp(config.captureDirectory, function(err) {
+mkdirp(config.captureDirectory, function (err) {
 	if (err) {
 		console.log(err);
 	}
 });
 
-var debugPrint = function(printString) {
+var debugPrint = function (printString) {
 	if (config.debug) {
 		console.log("[" + getCurrentDateTime() + "]", printString);
 	}
@@ -38,6 +38,14 @@ var debugPrint = function(printString) {
 
 var getCurrentDateTime = function() {
 	return moment().format("YYYY-MM-DDThhmmss"); // The only true way of writing out dates and times, ISO 8601
+};
+
+var getFileSize = function (filename) {
+	return Promise.try(function() {
+		return fs.statsAsync(filename);
+	}).then(function (stats) {
+		return stats.size;
+	});
 };
 
 var getCommandArguments = function (modelName) {
@@ -82,6 +90,8 @@ var capture = function (modelName) {
 	Promise.try(function() {
 		return getCommandArguments(modelName);
 	}).then(function (commandArguments) {
+		var filename = "./" + commandArguments.captureDirectory + "/Chaturbate_" + commandArguments.dateString + "_" + commandArguments.modelName + ".flv";
+
 		var spawnArguments = [
 			"--live",
 			config.debug ? "" : "--quiet",
@@ -102,7 +112,7 @@ var capture = function (modelName) {
 			"--playpath",
 			"playpath",
 			"--flv",
-			"./" + commandArguments.captureDirectory + "/Chaturbate_" + commandArguments.dateString + "_" + commandArguments.modelName + ".flv"
+			filename
 		];
 
 		var captureProcess = childProcess.spawn("rtmpdump", spawnArguments);
@@ -114,6 +124,14 @@ var capture = function (modelName) {
 			if(modelIndex !== -1) {
 				modelsCurrentlyCapturing.splice(modelIndex, 1);
 			}
+
+			Promise.try(function() {
+				return getFileSize(filename);
+			}).then(function (fileSize) {
+				if (fileSize === 0) {
+					return fs.unlinkAsync(filename);
+				}
+			});
 		});
 
 		captureProcess.stdout.on("data", function (data) {
