@@ -35,6 +35,12 @@ function getTimestamp() {
   return Math.floor(new Date().getTime() / 1000);
 }
 
+function dumpModelsCurrentlyCapturing() {
+  _.each(modelsCurrentlyCapturing, function(m) {
+    printDebugMsg(colors.red(m.pid) + "\t" + m.checkAfter + "\t" + m.filename);
+  });
+}
+
 function login() {
   return Promise
     .try(function() {
@@ -130,6 +136,13 @@ function getCommandArguments(modelName) {
 }
 
 function createCaptureProcess(modelName) {
+  var model = _.findWhere(modelsCurrentlyCapturing, {modelName: modelName});
+
+  if (!!model) {
+    printDebugMsg(colors.green(modelName) + ' is already capturing');
+    return; // resolve immediately
+  }
+
   printMsg(colors.green(modelName) + ' is now online, starting rtmpdump process');
 
   return Promise
@@ -141,7 +154,7 @@ function createCaptureProcess(modelName) {
 
       var spawnArguments = [
         '--live',
-        config.debug ? '' : '--quiet',
+        config.rtmpDebug ? '' : '--quiet',
         '--rtmp',
         'rtmp://' + commandArguments.streamServer + '/live-edge',
         '--pageUrl',
@@ -165,11 +178,11 @@ function createCaptureProcess(modelName) {
       var captureProcess = childProcess.spawn('rtmpdump', spawnArguments);
 
       captureProcess.stdout.on('data', function(data) {
-        printMsg(colors.green('[' + modelName + ']') + ' ' + data.toString());
+        printMsg(data.toString);
       });
 
       captureProcess.stderr.on('data', function(data) {
-        printErrorMsg('[' + colors.green(modelName) + '] ' + data.toString());
+        printMsg(data.toString);
       });
 
       captureProcess.on('close', function(code) {
@@ -210,16 +223,20 @@ function createCaptureProcess(modelName) {
           filename: filename,
           captureProcess: captureProcess,
           pid: captureProcess.pid,
-          checkAfter: getTimestamp() + 60 // 60 seconds
+          checkAfter: getTimestamp() + 60, // we are gonna check the process after 60 seconds
+          size: 0
         });
       }
+    })
+    .catch(function(err) {
+      printErrorMsg('[' + colors.green(modelName) + '] ' + err.toString());
     });
 }
 
 function checkCaptureProcess(model) {
-  printDebugMsg(colors.green(model.modelName) + ' is already capturing');
-
   if (!model.checkAfter || model.checkAfter > getTimestamp()) {
+    // if this is not the time to check the process then we resolve immediately
+    printDebugMsg(colors.green(model.modelName) + ' - OK');
     return;
   }
 
@@ -228,39 +245,33 @@ function checkCaptureProcess(model) {
   return fs
     .statAsync(config.captureDirectory + '/' + model.filename)
     .then(function(stats) {
-      // if after 60 seconds the file is not empty then we assume the capture process started successfully
-      // and we don't have to check it anymore
-      if (stats.size > 0) {
+      // we check the process after 60 seconds since the its start,
+      // then we check it every 10 minutes,
+      // if the size of the file has not changed over the time, we kill the process
+      if (stats.size - model.size > 0) {
+        printDebugMsg(colors.green(model.modelName) + ' - OK');
         modelsCurrentlyCapturing.forEach(function(m) {
           if (m.modelName == model.modelName && m.pid == model.pid) {
-            m.checkAfter = null;
+            m.checkAfter = getTimestamp() + 600; // 10 minutes
+            m.size = stats.size;
           }
         });
       } else if (!!model.captureProcess) {
         // we assume that onClose will do clean up for us
-        printErrorMsg('[' + colors.green(model.modelName) + '] process is dead');
+        printErrorMsg('[' + colors.green(model.modelName) + '] Process is dead');
         model.captureProcess.kill();
+      } else {
+        // suppose here we should forcefully remove the model from modelsCurrentlyCapturing
+        // because her captureProcess is unset, but let's leave this as is
       }
     })
     .catch(function(err) {
       if (err.code == 'ENOENT') {
         // do nothing, file does not exists,
-        // this is kind of impossible case, probably we should close the capture process here
+        // this is kind of impossible case, however, probably there should be some code to "clean up" the process
       } else {
         printErrorMsg('[' + colors.green(model.modelName) + '] ' + err.toString());
       }
-    });
-}
-
-function captureModel(modelName) {
-  return Promise
-    .try(function() {
-      var model = _.findWhere(modelsCurrentlyCapturing, {modelName: modelName});
-
-      return (!model) ? createCaptureProcess(modelName) : checkCaptureProcess(model);
-    })
-    .catch(function(err) {
-      printErrorMsg('[' + colors.green(modelName) + '] ' + err.toString());
     });
 }
 
@@ -289,6 +300,8 @@ var modelsCurrentlyCapturing = new Array();
 function mainLoop() {
   printDebugMsg('Start searching for new models');
 
+  dumpModelsCurrentlyCapturing();
+
   Promise
     .try(function() {
       return login();
@@ -297,12 +310,19 @@ function mainLoop() {
       return getLiveModels();
     })
     .then(function(liveModels) {
-      return Promise.all(liveModels.map(captureModel));
+      printDebugMsg('createCaptureProcess');
+      return Promise.all(liveModels.map(createCaptureProcess));
+    })
+    .then(function() {
+      printDebugMsg('checkCaptureProcess');
+      return Promise.all(modelsCurrentlyCapturing.map(checkCaptureProcess));
     })
     .catch(function(err) {
       printErrorMsg(err);
     })
     .finally(function() {
+      dumpModelsCurrentlyCapturing();
+
       printMsg('Done, will search for new models in ' + config.modelScanInterval + ' second(s).');
 
       setTimeout(mainLoop, config.modelScanInterval * 1000);
