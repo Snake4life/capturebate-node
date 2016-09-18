@@ -5,3 +5,4 @@ completeDirectory: complete # Where you want the "finalized" captures to be move
 modelScanInterval: 30 # In seconds, how often capturebate-node checks for newly-online models
 debug: false
 rtmpDebug: false
+minFileSizeMb: 10

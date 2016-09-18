@@ -37,7 +37,7 @@ function getTimestamp() {
 
 function dumpModelsCurrentlyCapturing() {
   _.each(modelsCurrentlyCapturing, function(m) {
-    printDebugMsg(colors.red(m.pid) + "\t" + m.checkAfter + "\t" + m.filename);
+    printDebugMsg(colors.red(m.pid) + '\t' + m.checkAfter + '\t' + m.filename);
   });
 }
 
@@ -205,8 +205,10 @@ function createCaptureProcess(modelName) {
             } else {
               printErrorMsg('[' + colors.green(modelName) + '] ' + err.toString());
             }
-          } else if (stats.size === 0) {
-            fs.unlink(config.captureDirectory + '/' + filename);
+          } else if (stats.size < (config.minFileSizeMb * 1048576)) {
+            fs.unlink(config.captureDirectory + '/' + filename, function(err) {
+              // do nothing, shit happens
+            });
           } else {
             fs.rename(config.captureDirectory + '/' + filename, config.completeDirectory + '/' + filename, function(err) {
               if (err) {
@@ -250,12 +252,9 @@ function checkCaptureProcess(model) {
       // if the size of the file has not changed over the time, we kill the process
       if (stats.size - model.size > 0) {
         printDebugMsg(colors.green(model.modelName) + ' - OK');
-        modelsCurrentlyCapturing.forEach(function(m) {
-          if (m.modelName == model.modelName && m.pid == model.pid) {
-            m.checkAfter = getTimestamp() + 600; // 10 minutes
-            m.size = stats.size;
-          }
-        });
+
+        model.checkAfter = getTimestamp() + 600; // 10 minutes
+        model.size = stats.size;
       } else if (!!model.captureProcess) {
         // we assume that onClose will do clean up for us
         printErrorMsg('[' + colors.green(model.modelName) + '] Process is dead');
@@ -277,6 +276,7 @@ function checkCaptureProcess(model) {
 
 var config = yaml.safeLoad(fs.readFileSync('config.yml', 'utf8'));
 
+config.minFileSizeMb = config.minFileSizeMb || 0;
 config.captureDirectory = path.resolve(config.captureDirectory);
 config.completeDirectory = path.resolve(config.completeDirectory);
 
