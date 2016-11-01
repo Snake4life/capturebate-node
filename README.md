@@ -5,8 +5,6 @@ capturebate-node lets you follow and archive your favorite models' shows on chat
 
 Requirements
 ==========
-(Debian 7, minimum)
-
 [RTMPDump(ksv)](https://github.com/BurntSushi/rtmpdump-ksv) used to capture the streams.
 
 [Node.js](https://nodejs.org/download/) used to run capturebate-node, hence the name.
@@ -34,11 +32,9 @@ Standard output should look something this when recording streams:
 	[2015-05-16T00:19:02] capturebate-node started
 	[2015-05-16T00:19:08] eeeveee is now online, starting rtmpdump process
 
-Encoding
+Converting
 ===========
 
-Once you've captured some streams you're going to need to convert the audio to have them play nice in most media players. This is where ffmpeg comes in, there is no need to convert the video so this doesn't take too long. To convert individual files do `ffmpeg -i input.flv -vcodec copy -acodec libmp3lame output.mp4` this will convert the speex audio to mp3 and change the container to mp4 (stream is h264)
+There is a simple script to convert `.flv` files. Just edit `convert.yml` file and set proper values for `srcDirectory` (should be the same with `completeDirectory`) and `dstDirectory`, and run `node convert.js` in separate console window.
 
-If you want to batch convert your captured streams run `find ./ -name '*.flv' -execdir mkdir converted_bates \;; for file in *.flv; do ffmpeg -i "$file" -vcodec copy -acodec libmp3lame "converted_bates/${file%.flv}.mp4"; done` from the directory you capture to.
-
-If you don't want to do any conversion you can install the [speex audio codec](http://speex.org/downloads/) which is a huge pain in the ass to get working correctly under linux/VLC.
+> Note for Windows users: You should copy `ffmpeg.exe` file into the same directory as `main.js` is.

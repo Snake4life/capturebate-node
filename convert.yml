@@ -1,0 +1,4 @@
+srcDirectory: ./complete # directory where you store your .ts files
+dstDirectory: ./converted # directory where do you want to store your .mp4 files
+dirScanInterval: 300 # in seconds, min: 5 seconds
+deleteAfter: false # if it is false the original file will be stored in the same directory with its .mp4 version
