@@ -1,166 +1,208 @@
 'use strict';
+
 var Promise = require('bluebird');
 var fs = Promise.promisifyAll(require('fs'));
-var S = require('string');
 var yaml = require('js-yaml');
 var colors = require('colors');
 var childProcess = require('child_process');
 var mkdirp = require('mkdirp');
+var mkdirpAsync = Promise.promisify(mkdirp);
 var path = require('path');
 var moment = require('moment');
-var _ = require('underscore');
+var Queue = require('promise-queue');
+var filewalker = require('filewalker');
+var JSONStream = require('JSONStream');
+
+var config = yaml.safeLoad(fs.readFileSync('convert.yml', 'utf8'));
+
+var srcDirectory = path.resolve(config.srcDirectory || './complete');
+var dstDirectory = path.resolve(config.dstDirectory || './converted');
+var dirScanInterval = config.dirScanInterval || 300;
+var maxConcur = config.maxConcur || 1;
+
+Queue.configure(Promise.Promise);
+
+var queue = new Queue(maxConcur, Infinity);
 
 function getCurrentDateTime() {
-  return moment().format('YYYY-MM-DDTHHmmss'); // The only true way of writing out dates and times, ISO 8601
-};
+  return moment().format('MM/DD/YYYY - HH:mm:ss');
+}
 
 function printMsg(msg) {
-  console.log(colors.blue('[' + getCurrentDateTime() + ']'), msg);
+  console.log(colors.gray(`[${getCurrentDateTime()}]`), msg);
 }
 
 function printErrorMsg(msg) {
-  console.log(colors.blue('[' + getCurrentDateTime() + ']'), colors.red('[ERROR]'), msg);
+  console.log(colors.gray(`[${getCurrentDateTime()}]`), colors.red('[ERROR]'), msg);
 }
-
-function getTimestamp() {
-  return Math.floor(new Date().getTime() / 1000);
-}
-
-var startTs;
-var config = yaml.safeLoad(fs.readFileSync('convert.yml', 'utf8'));
-
-config.srcDirectory = path.resolve(config.srcDirectory);
-config.dstDirectory = path.resolve(config.dstDirectory);
-
-mkdirp.sync(config.srcDirectory);
-mkdirp.sync(config.dstDirectory);
 
 function getFiles() {
-  return fs
-    .readdirAsync(config.srcDirectory)
-    .then(function(files) {
-      return _.filter(files, function(file) {
-        return S(file).endsWith('.ts') || S(file).endsWith('.flv');
-      });
-    });
-}
+  let files = [];
 
-function convertFile(srcFile) {
-  var dstFile;
-  var srcFile;
-  var spawnArguments;
-
-  if (S(srcFile).endsWith('.ts')) {
-    dstFile = S(srcFile).chompRight('ts').s + 'mp4';
-
-    spawnArguments = [
-      '-i',
-      config.srcDirectory + '/' + srcFile,
-      '-y',
-      '-hide_banner',
-      '-loglevel',
-      'panic',
-      '-c:v',
-      'copy',
-      '-c:a',
-      'copy',
-      '-bsf:a',
-      'aac_adtstoasc',
-      '-copyts',
-      config.srcDirectory + '/' + dstFile
-    ];
-  }
-
-  if (S(srcFile).endsWith('.flv')) {
-    dstFile = S(srcFile).chompRight('flv').s + 'mp4';
-
-    spawnArguments = [
-      '-i',
-      config.srcDirectory + '/' + srcFile,
-      '-y',
-      '-hide_banner',
-      '-loglevel',
-      'panic',
-      '-movflags',
-      '+faststart',
-      '-c:v',
-      'copy',
-      '-strict',
-      '-2',
-      '-q:a',
-      '100',
-      config.srcDirectory + '/' + dstFile
-    ];
-  }
-
-  if (!dstFile) {
-    printErrorMsg('Failed to convert ' + srcFile);
-
-    return ;
-  }
-
-  printMsg('Converting ' + srcFile + ' into ' + dstFile);
-
-  var convertProcess = childProcess.spawnSync('ffmpeg', spawnArguments);
-
-  if (convertProcess.status != 0) {
-    printErrorMsg('Failed to convert ' + srcFile);
-
-    if (convertProcess.error) {
-      printErrorMsg(convertProcess.error.toString());
-    }
-
-    return;
-  }
-
-  if (config.deleteAfter) {
-    fs.unlink(config.srcDirectory + '/' + srcFile, function(err) {
-      // do nothing, shit happens
-    });
-  } else {
-    fs.rename(config.srcDirectory + '/' + srcFile, config.dstDirectory + '/' + srcFile, function(err) {
-      if (err) {
-        printErrorMsg(err.toString());
-      }
-    });
-  }
-
-  fs.rename(config.srcDirectory + '/' + dstFile, config.dstDirectory + '/' + dstFile, function(err) {
-    if (err) {
-      printErrorMsg(err.toString());
-    }
+  return new Promise((resolve, reject) => {
+    filewalker(srcDirectory, { maxPending: 1, matchRegExp: /(\.ts|\.flv)$/ })
+      .on('file', (p, stats) => {
+        // select only "not hidden" files and not empty files (>10KBytes)
+        if (!p.match(/(^\.|\/\.)/) && stats.size > 10240) {
+          // push path relative to srcDirectory
+          files.push(p);
+        }
+      })
+      .on('done', () => {
+        resolve(files);
+      })
+      .walk();
   });
 }
 
+function getAudioCodec(srcFile) {
+  return new Promise((resolve, reject) => {
+    let audioCodec = '';
+    let spawnArguments = [
+      '-v', 'error',
+      '-select_streams', 'a:0',
+      '-show_streams',
+      '-print_format', 'json',
+      srcFile
+    ];
+
+    let ffprobeProcess = childProcess.spawn('ffprobe', spawnArguments);
+
+    ffprobeProcess.stdout.pipe(JSONStream.parse('streams.0')).on('data', data => {
+      audioCodec = data.codec_name;
+    });
+
+    ffprobeProcess.on('close', code => {
+      if (code !== 0) {
+        reject(`Failed to get audio codec from ${srcFile}`);
+      } else {
+        resolve(audioCodec);
+      }
+    });
+  }).timeout(5000); // 5 seconds
+}
+
+function getSpawnArguments(srcFile, dstFile) {
+  return getAudioCodec(srcFile)
+    .then(audioCodec => (audioCodec === 'aac')
+      ? [ // aac
+        '-i', srcFile,
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'panic',
+        '-movflags', '+faststart',
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        '-copyts',
+        '-start_at_zero',
+        dstFile
+      ]
+      : [ // speex or something else
+        '-i', srcFile,
+        '-y',
+        '-hide_banner',
+        '-loglevel', 'panic',
+        '-movflags', '+faststart',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '64k',
+        dstFile
+      ]
+    );
+}
+
+function convertFile(srcFile) {
+  let startTs = moment();
+  let src = path.join(srcDirectory, srcFile);
+
+  let dstPath = path.resolve(path.dirname(path.join(dstDirectory, srcFile)));
+  let dstFile = path.basename(srcFile, path.extname(srcFile)) + '.mp4';
+
+  let tempDst = path.join(dstPath, `~${dstFile}`);
+  let dst = path.join(dstPath, dstFile);
+
+  return mkdirpAsync(dstPath)
+    .then(() => getSpawnArguments(src, tempDst))
+    .then(spawnArguments => new Promise((resolve, reject) => {
+      printMsg(`Starting ${colors.green(srcFile)}...`);
+      // printMsg('ffmpeg ' + spawnArguments.join(' '));
+
+      let ffmpegProcess = childProcess.spawn('ffmpeg', spawnArguments);
+
+      ffmpegProcess.on('close', code => {
+        if (code !== 0) {
+          reject(`Failed to convert ${srcFile}`);
+        } else {
+          let mtime;
+
+          fs.statAsync(src)
+            .then(stats => {
+              // remember "modification time" of original file
+              mtime = Math.ceil(stats.mtime.getTime() / 1000);
+            })
+            .then(() => config.deleteAfter ? fs.unlinkAsync(src) : fs.renameAsync(src, `${src}.bak`))
+            .then(() => fs.renameAsync(tempDst, dst))
+            .then(() => fs.utimesAsync(dst, mtime, mtime))
+            .then(() => {
+              let duration = moment.duration(moment().diff(startTs)).asSeconds().toString();
+
+              printMsg(`Finished ${colors.green(srcFile)} after ${colors.magenta(duration)} s`);
+
+              resolve();
+            })
+            .catch(err => {
+              reject(err.toString());
+            });
+        }
+      });
+    }));
+}
+
 function mainLoop() {
-  startTs = getTimestamp();
+  let startTs = moment().unix();
 
   Promise
-    .try(function() {
-      return getFiles();
-    })
-    .then(function(files) {
-      if (files.length > 0) {
-        printMsg(files.length + ' file(s) to convert');
-        _.each(files, convertFile);
+    .try(() => getFiles())
+    .then(files => new Promise((resolve, reject) => {
+      printMsg(files.length + ' file(s) to convert');
+
+      if (files.length === 0) {
+        resolve();
       } else {
-        printMsg('No files found');
+        files.forEach(file => {
+          queue
+            .add(() => convertFile(file))
+            .then(() => {
+              if ((queue.getPendingLength() + queue.getQueueLength()) === 0) {
+                resolve();
+              }
+            })
+            .catch(err => {
+              printErrorMsg(err);
+            });
+        });
+      }
+    }))
+    .catch(err => {
+      if (err) {
+        printErrorMsg(err);
       }
     })
-    .catch(function(err) {
-      printErrorMsg(err);
-    })
-    .finally(function() {
-      var seconds = startTs - getTimestamp() + config.dirScanInterval;
+    .finally(() => {
+      let seconds = startTs - moment().unix() + dirScanInterval;
 
       if (seconds < 5) {
         seconds = 5;
       }
 
-      printMsg('Done, will scan the folder in ' + seconds + ' second(s).');
+      printMsg(`Done, will scan the folder in ${seconds} seconds`);
 
       setTimeout(mainLoop, seconds * 1000);
     });
 }
+
+mkdirp.sync(srcDirectory);
+mkdirp.sync(dstDirectory);
 
 mainLoop();
