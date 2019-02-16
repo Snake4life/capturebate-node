@@ -5,7 +5,7 @@ capturebate-node lets you follow and archive your favorite models' shows on chat
 
 ### Requirements
 
-[RTMPDump(ksv)](https://github.com/BurntSushi/rtmpdump-ksv) used to capture the streams.
+[RTMPDump(ksv)](https://github.com/sstativa/rtmpdump-ksv) used to capture the streams.
 
 [Node.js](https://nodejs.org/download/) used to run capturebate-node, hence the name.
 
